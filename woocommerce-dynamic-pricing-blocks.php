@@ -44,6 +44,7 @@ if ( is_woocommerce_active() ) {
 		private $_cart_setup = false;
 
 		private $_products_to_adjust;
+		private $_categories_to_adjust;
 
 		private $_price_blocks;
 
@@ -64,13 +65,15 @@ if ( is_woocommerce_active() ) {
 			add_filter( 'woocommerce_product_get_price', array( $this, 'on_get_price' ), 10, 2 );
 			add_filter( 'woocommerce_cart_item_price', array( $this, 'on_get_cart_item_price' ), 10, 2 );
 
-			$this->_products_to_adjust   = array();
-			$this->_products_to_adjust[] = 5035;
+			//$this->_products_to_adjust   = array();
+			//$this->_products_to_adjust[] = 5035;
+
+			$this->_categories_to_adjust   = array();
+			$this->_categories_to_adjust[] = 60; //TODO:  Change this to your category you want to adjust.
 
 			$this->_price_blocks = array();
 
-			$this->_price_blocks[6] = 74.90;
-			$this->_price_blocks[10] = 69.9999;
+			$this->_price_blocks[3] = 20;
 
 		}
 
@@ -109,19 +112,18 @@ if ( is_woocommerce_active() ) {
 
 			ksort( $this->_price_blocks, SORT_NUMERIC );
 			$price_blocks = array_reverse( $this->_price_blocks, true );
-
 			if ( $cart && $cart->get_cart_contents_count() ) {
 
 				foreach ( $cart->get_cart() as $cart_item_key => &$cart_item ) {
+					WC()->cart->cart_contents[ $cart_item_key ]['es_adjusted_quantities'] = array();
 
 					$quantity_remaining = $cart_item['quantity'];
 
-					$product    = $cart_item['data'];
-					$product_id = $product->is_type( 'variation' ) ? $product->get_parent_id() : $product->get_id();
-
-					if ( in_array( $product_id, $this->_products_to_adjust ) ) {
-
-						WC()->cart->cart_contents[ $cart_item_key ]['es_adjusted_quantities'] = array();
+					$product     = $cart_item['data'];
+					$product_id  = $product->is_type( 'variation' ) ? $product->get_parent_id() : $product->get_id();
+					$the_product = wc_get_product( $product_id );
+					$category_id = $the_product->get_category_ids();
+					if ( count( array_intersect( $category_id, $this->_categories_to_adjust ) ) ) {
 
 						foreach ( $price_blocks as $quantity => $amount ) {
 							$adjust = floor( $quantity_remaining / $quantity );
