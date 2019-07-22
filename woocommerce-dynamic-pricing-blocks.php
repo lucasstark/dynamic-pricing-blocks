@@ -8,14 +8,14 @@
  * Author: Lucas Stark
  * Author URI: https://elementstark.com
  * Requires at least: 3.3
- * Tested up to: 4.9.6
+ * Tested up to: 5.2.2
  * Text Domain: woocommerce-dynamic-pricing-blocks
  * Domain Path: /i18n/languages/
  * Copyright: © 2009-2018 Lucas Stark.
  * License: GNU General Public License v3.0
  * License URI: http://www.gnu.org/licenses/gpl-3.0.html
  * WC requires at least: 3.0.0
- * WC tested up to: 3.4.3
+ * WC tested up to: 3.7.0
  */
 
 
@@ -48,6 +48,8 @@ if ( is_woocommerce_active() ) {
 
 		private $_price_blocks;
 
+		private $_adjustment_type;
+
 		protected function __construct() {
 
 			add_filter( 'woocommerce_get_cart_item_from_session', array(
@@ -69,12 +71,12 @@ if ( is_woocommerce_active() ) {
 			//$this->_products_to_adjust[] = 5035;
 
 			$this->_categories_to_adjust   = array();
-			$this->_categories_to_adjust[] = 60; //TODO:  Change this to your category you want to adjust.
+			$this->_categories_to_adjust[] = 43; //TODO:  Change this to your category you want to adjust.
 
-			$this->_price_blocks = array();
-
-			$this->_price_blocks[3] = 20;
-
+			$this->_adjustment_type = 'percent';
+			$this->_price_blocks    = array();
+			$this->_price_blocks[2] = 25;
+			$this->_price_blocks[3] = 50;
 		}
 
 		/**
@@ -114,35 +116,53 @@ if ( is_woocommerce_active() ) {
 			$price_blocks = array_reverse( $this->_price_blocks, true );
 			if ( $cart && $cart->get_cart_contents_count() ) {
 
-				foreach ( $cart->get_cart() as $cart_item_key => &$cart_item ) {
-					WC()->cart->cart_contents[ $cart_item_key ]['es_adjusted_quantities'] = array();
+				$target_category_count = 0;
+				foreach ( $cart->get_cart() as $cart_item_key => $cart_item ) {
+					unset( WC()->cart->cart_contents[ $cart_item_key ]['es_adjusted_quantities'] );
+					$product_categories = $cart_item['data']->get_category_ids();
+					if ( count( array_intersect( $product_categories, $this->_categories_to_adjust ) ) > 0 ) {
+						$target_category_count += $cart_item['quantity'];
+					}
+				}
 
-					$quantity_remaining = $cart_item['quantity'];
 
-					$product     = $cart_item['data'];
-					$product_id  = $product->is_type( 'variation' ) ? $product->get_parent_id() : $product->get_id();
-					$the_product = wc_get_product( $product_id );
-					$category_id = $the_product->get_category_ids();
-					if ( count( array_intersect( $category_id, $this->_categories_to_adjust ) ) ) {
-
-						foreach ( $price_blocks as $quantity => $amount ) {
-							$adjust = floor( $quantity_remaining / $quantity );
-							if ( $adjust ) {
-								//We know we can adjust using this quantity block.
-
-								//Reduce the quantity remaining by the block size * how many times it can be applied.
-								$quantity_remaining = $quantity_remaining - ( $quantity * $adjust );
-
-								for ( $i = 0; $i < $quantity * $adjust; $i ++ ) {
-									WC()->cart->cart_contents[ $cart_item_key ]['es_adjusted_quantities'][] = $amount;
-								}
-
-								if ( $quantity_remaining <= 0 ) {
-									break;
-								}
-
-							}
+				$adjustment         = null;
+				$current_block_size = - 1;
+				if ( $target_category_count ) {
+					foreach ( $price_blocks as $price_block_size => $price_block ) {
+						if ( $target_category_count >= $price_block_size ) {
+							$adjustment         = $price_block;
+							$current_block_size = $price_block_size;
+							break;
 						}
+					}
+				}
+
+				$full_priced_items = $target_category_count % $current_block_size;
+				$quantity_remaining = $target_category_count - $full_priced_items;
+
+				foreach ( $cart->get_cart() as $cart_item_key => &$cart_item ) {
+					$product            = $cart_item['data'];
+					$product_id         = $product->is_type( 'variation' ) ? $product->get_parent_id() : $product->get_id();
+					$the_product        = wc_get_product( $product_id );
+					$product_base_price = $product->get_price( 'edit' );
+					$category_ids       = $the_product->get_category_ids();
+
+					if ( count( array_intersect( $category_ids, $this->_categories_to_adjust ) ) ) {
+						WC()->cart->cart_contents[ $cart_item_key ]['es_adjusted_quantities'] = array_fill( 0, $cart_item['quantity'], $product_base_price );
+
+						if ( $this->_adjustment_type == 'percent' && $adjustment > 1 ) {
+							$adjustment = $adjustment / 100;
+						}
+						$adjusted_price = $product_base_price - ( $product_base_price * $adjustment );
+						$c              = 0;
+
+						while($quantity_remaining && $c < $cart_item['quantity']) {
+							WC()->cart->cart_contents[ $cart_item_key ]['es_adjusted_quantities'][$c] = $adjusted_price;
+							$quantity_remaining--;
+							$c++;
+						}
+
 					}
 				}
 			}
@@ -150,25 +170,13 @@ if ( is_woocommerce_active() ) {
 			foreach ( WC()->cart->cart_contents as $cart_item_key => &$cart_item ) {
 
 				if ( isset( $cart_item['es_adjusted_quantities'] ) ) {
-
 					$grand_total = array_sum( $cart_item['es_adjusted_quantities'] );
-					if ( count( $cart_item['es_adjusted_quantities'] ) < $cart_item['quantity'] ) {
-						//The remaining full priced items.
-						$remaining = $cart_item['quantity'] - count( $cart_item['es_adjusted_quantities'] );
-						if ( $remaining ) {
-							$grand_total += $product->get_price( 'edit' ) * $remaining;
-						}
-					}
-
 					if ( $grand_total ) {
 						$cart_item['es_adjusted_grand_total']   = $grand_total;
 						$cart_item['es_adjusted_product_price'] = wc_cart_round_discount( $grand_total / $cart_item['quantity'], 4 );
 					}
-
 				}
-
 			}
-
 		}
 
 		/**
@@ -176,6 +184,7 @@ if ( is_woocommerce_active() ) {
 		 *
 		 * @param $price
 		 * @param $product
+		 * @return float The products price.
 		 */
 		public function on_get_price( $price, $product ) {
 
